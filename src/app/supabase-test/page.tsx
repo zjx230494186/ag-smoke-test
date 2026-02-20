@@ -35,7 +35,6 @@ export default function SupabaseTestPage() {
             if (session?.user) fetchDocs();
             setPageLoading(false);
         });
-
         const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
             setUser(session?.user ?? null);
             if (session?.user) fetchDocs();
@@ -87,13 +86,13 @@ export default function SupabaseTestPage() {
 
     return (
         <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-6">
-            <div className="max-w-lg w-full space-y-4">
+            <div className="max-w-xl w-full space-y-4">
                 {/* Header */}
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-md">
                     <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent mb-1">
-                        Supabase Smoke Test
+                        我的文档
                     </h1>
-                    <p className="text-slate-400 text-xs">Documents + RLS + Magic Link</p>
+                    <p className="text-slate-400 text-xs">Supabase · Magic Link · 多人共享</p>
                 </div>
 
                 {!user ? (
@@ -118,7 +117,6 @@ export default function SupabaseTestPage() {
                         {status && <p className="text-sm text-center text-slate-300">{status}</p>}
                     </div>
                 ) : (
-                    /* ── 已登录：文档 CRUD ── */
                     <>
                         {/* 用户信息 */}
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md flex items-center justify-between text-white">
@@ -160,18 +158,34 @@ export default function SupabaseTestPage() {
                         {/* 文档列表 */}
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-md text-white">
                             <h2 className="font-semibold text-slate-200 mb-3">
-                                我的文档 <span className="text-slate-500 text-sm">({docs.length})</span>
+                                文档列表 <span className="text-slate-500 text-sm">({docs.length})</span>
                             </h2>
                             {docs.length === 0 ? (
                                 <p className="text-slate-500 text-sm text-center py-4">暂无文档，创建第一篇吧 👆</p>
                             ) : (
                                 <ul className="space-y-2">
                                     {docs.map((doc) => (
-                                        <li key={doc.id} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                                            <p className="text-sm font-medium text-white">{doc.title}</p>
-                                            <p className="text-xs text-slate-500 mt-0.5">
-                                                {new Date(doc.created_at).toLocaleString("zh-CN")}
-                                            </p>
+                                        <li key={doc.id} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 flex items-center justify-between">
+                                            <div>
+                                                <p className="text-sm font-medium text-white">{doc.title}</p>
+                                                <p className="text-xs text-slate-500 mt-0.5">
+                                                    {new Date(doc.created_at).toLocaleString("zh-CN")}
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2 ml-3 shrink-0">
+                                                <a
+                                                    href={`/doc/${doc.id}`}
+                                                    className="text-xs bg-indigo-500/20 hover:bg-indigo-500/40 border border-indigo-500/30 text-indigo-300 px-3 py-1 rounded-lg transition"
+                                                >
+                                                    打开
+                                                </a>
+                                                <a
+                                                    href={`/doc/${doc.id}/share`}
+                                                    className="text-xs bg-emerald-500/20 hover:bg-emerald-500/40 border border-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg transition"
+                                                >
+                                                    共享
+                                                </a>
+                                            </div>
                                         </li>
                                     ))}
                                 </ul>
@@ -180,10 +194,9 @@ export default function SupabaseTestPage() {
                     </>
                 )}
 
-                {/* 导航回首页 */}
                 <div className="text-center">
                     <a href="/" className="text-xs text-slate-500 hover:text-slate-300 transition">
-                        ← 返回 Smoke Test 首页
+                        ← 返回首页
                     </a>
                 </div>
             </div>
