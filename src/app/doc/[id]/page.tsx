@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
@@ -55,6 +55,9 @@ export default function DocPage() {
     const [memberEmails, setMemberEmails] = useState<Record<string, string>>({});
     const [showUploader, setShowUploader] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
+
+    // Ref to imperatively set editor content (needed in collab mode)
+    const editorSetContentRef = useRef<((html: string) => void) | null>(null);
 
     // Collaboration state
     const ydocRef = useRef<Y.Doc | null>(null);
@@ -194,8 +197,14 @@ export default function DocPage() {
         if (fileType === 'text' || fileType === 'docx') {
             setEditorContent(v.content);
             setDisplayContent(v.content);
+            // In collab mode, React state won't update the editor — use imperative API
+            editorSetContentRef.current?.(v.content);
         }
     }
+
+    const handleEditorReady = useCallback((setContentFn: (html: string) => void) => {
+        editorSetContentRef.current = setContentFn;
+    }, []);
 
     if (loading) {
         return (
@@ -299,6 +308,7 @@ export default function DocPage() {
                             placeholder="开始编写文档内容..."
                             ydoc={collabReady ? ydocRef.current ?? undefined : undefined}
                             provider={collabReady ? providerRef.current ?? undefined : undefined}
+                            onEditorReady={handleEditorReady}
                         />
                     )}
                     {fileType === 'pdf' && fileUrl && <PdfViewer fileUrl={fileUrl} />}

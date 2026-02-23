@@ -18,6 +18,7 @@ interface RichTextEditorProps {
     placeholder?: string;
     ydoc?: Y.Doc;
     provider?: SupabaseProvider;
+    onEditorReady?: (setContent: (html: string) => void) => void;
 }
 
 export default function RichTextEditor({
@@ -27,6 +28,7 @@ export default function RichTextEditor({
     placeholder = '开始编写内容...',
     ydoc,
     provider,
+    onEditorReady,
 }: RichTextEditorProps) {
     // Suppress unused var warning — provider used for awareness display only
     void provider;
@@ -69,6 +71,14 @@ export default function RichTextEditor({
             }
         }
     }, [content, editor, ydoc]);
+
+    // Expose setContent to parent for imperative updates (e.g., loading versions in collab mode)
+    useEffect(() => {
+        if (!editor || editor.isDestroyed) return;
+        onEditorReady?.((html: string) => {
+            editor.commands.setContent(html);
+        });
+    }, [editor, onEditorReady]);
 
     // Sync readOnly state
     useEffect(() => {
