@@ -1,257 +1,323 @@
-"use client";
+'use client';
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
-import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
-import type { User } from "@supabase/supabase-js";
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase';
+import dynamic_import from 'next/dynamic';
 
-interface DocRow {
-    id: string;
-    title: string;
-    user_id: string;
-}
+// Dynamically import heavy components to avoid SSR issues
+const RichTextEditor = dynamic_import(() => import('@/components/RichTextEditor'), { ssr: false });
+const PdfViewer = dynamic_import(() => import('@/components/PdfViewer'), { ssr: false });
+const ExcelViewer = dynamic_import(() => import('@/components/ExcelViewer'), { ssr: false });
+const FileUploader = dynamic_import(() => import('@/components/FileUploader'), { ssr: false });
+
+type Role = 'owner' | 'editor' | 'viewer' | null;
+type FileType = 'text' | 'docx' | 'pdf' | 'excel';
 
 interface Version {
     id: string;
     content: string;
-    comment: string;
+    comment: string | null;
     created_at: string;
     created_by: string | null;
-    creator_email?: string;
 }
 
-interface Membership {
-    role: string;
+interface MemberEmail {
+    user_id: string;
+    email: string;
 }
 
 export default function DocPage() {
     const { id } = useParams<{ id: string }>();
     const router = useRouter();
+    const supabase = createClient();
 
-    const [user, setUser] = useState<User | null>(null);
-    const [doc, setDoc] = useState<DocRow | null>(null);
-    const [myRole, setMyRole] = useState<string>(""); // owner | editor | viewer | ""
-    const [content, setContent] = useState("");
-    const [comment, setComment] = useState("");
-    const [versions, setVersions] = useState<Version[]>([]);
-    const [status, setStatus] = useState("");
+    const [loading, setLoading] = useState(true);
+    const [title, setTitle] = useState('');
+    const [role, setRole] = useState<Role>(null);
+    const [fileType, setFileType] = useState<FileType>('text');
+    const [fileUrl, setFileUrl] = useState<string | null>(null);
+
+    // Rich text editor state
+    const [editorContent, setEditorContent] = useState('<p></p>');
+    const [displayContent, setDisplayContent] = useState('<p></p>');
+
+    const [comment, setComment] = useState('');
     const [saving, setSaving] = useState(false);
-    const [pageLoading, setPageLoading] = useState(true);
+    const [saveMsg, setSaveMsg] = useState('');
 
-    const fetchVersions = useCallback(async () => {
-        const { data } = await supabase
-            .from("versions")
-            .select("id, content, comment, created_at, created_by")
-            .eq("document_id", id)
-            .order("created_at", { ascending: false });
-        if (!data) return;
+    const [versions, setVersions] = useState<Version[]>([]);
+    const [memberEmails, setMemberEmails] = useState<Record<string, string>>({});
+    const [showUploader, setShowUploader] = useState(false);
+    const [userId, setUserId] = useState<string | null>(null);
 
-        // 获取提交者邮箱：轮询 member_with_email view
-        const memberEmails: Record<string, string> = {};
-        const { data: members } = await supabase
-            .from("member_with_email")
-            .select("user_id, email")
-            .eq("document_id", id);
-        if (members) {
-            for (const m of members) {
-                memberEmails[m.user_id] = m.email;
-            }
-        }
-
-        setVersions(
-            data.map((v) => ({
-                ...v,
-                creator_email: v.created_by
-                    ? (memberEmails[v.created_by] ?? v.created_by.slice(0, 8) + "…")
-                    : "未知",
-            }))
-        );
-    }, [id]);
+    const canEdit = role === 'owner' || role === 'editor';
 
     useEffect(() => {
-        supabase.auth.getSession().then(async ({ data: { session } }) => {
-            if (!session) { router.push("/supabase-test"); return; }
-            const currentUser = session.user;
-            setUser(currentUser);
+        async function load() {
+            // Auth check
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) { router.push('/supabase-test'); return; }
+            setUserId(session.user.id);
 
-            // 加载文档
-            const { data: docData, error } = await supabase
-                .from("documents")
-                .select("id, title, user_id")
-                .eq("id", id)
+            // Fetch document
+            const { data: doc, error } = await supabase
+                .from('documents')
+                .select('id, title, user_id, file_url, file_type')
+                .eq('id', id)
                 .single();
 
-            if (error || !docData) {
-                setStatus("❌ 文档不存在或无权限");
-                setPageLoading(false);
-                return;
-            }
-            setDoc(docData);
+            if (error || !doc) { router.push('/supabase-test'); return; }
+            setTitle(doc.title);
+            setFileType((doc.file_type as FileType) ?? 'text');
+            setFileUrl(doc.file_url);
 
-            // 判断角色
-            if (docData.user_id === currentUser.id) {
-                setMyRole("owner");
+            // Determine role
+            const isOwner = doc.user_id === session.user.id;
+            if (isOwner) {
+                setRole('owner');
             } else {
-                const { data: mem } = await supabase
-                    .from("document_members")
-                    .select("role")
-                    .eq("document_id", id)
-                    .eq("user_id", currentUser.id)
+                const { data: membership } = await supabase
+                    .from('document_members')
+                    .select('role')
+                    .eq('document_id', id)
+                    .eq('user_id', session.user.id)
                     .single();
-                setMyRole((mem as Membership | null)?.role ?? "");
+                if (!membership) { router.push('/supabase-test'); return; }
+                setRole(membership.role as Role);
             }
 
-            await fetchVersions();
-            setPageLoading(false);
-        });
-    }, [id, router, fetchVersions]);
+            // Fetch versions
+            await fetchVersions(session.user.id);
+            setLoading(false);
+        }
 
-    const saveVersion = async () => {
-        if (!content.trim()) { setStatus("❌ 内容不能为空"); return; }
+        load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
+
+    async function fetchVersions(uid?: string) {
+        const { data: vers } = await supabase
+            .from('versions')
+            .select('id, content, comment, created_at, created_by')
+            .eq('document_id', id)
+            .order('created_at', { ascending: false });
+
+        setVersions(vers ?? []);
+
+        // Fetch member emails for version display
+        const { data: members } = await supabase
+            .from('member_with_email')
+            .select('user_id, email')
+            .eq('document_id', id);
+
+        const map: Record<string, string> = {};
+        (members as MemberEmail[] ?? []).forEach(m => { map[m.user_id] = m.email; });
+
+        // Also add current user's id → email if available
+        if (uid) {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user?.email) map[user.id] = user.email!;
+        }
+        setMemberEmails(map);
+
+        // Load latest version content into editor
+        if (vers && vers.length > 0 && (fileType === 'text' || fileType === 'docx')) {
+            setEditorContent(vers[0].content);
+            setDisplayContent(vers[0].content);
+        }
+    }
+
+    async function saveVersion() {
+        if (!canEdit) return;
         setSaving(true);
-        setStatus("");
-        const { error } = await supabase.from("versions").insert({
+        setSaveMsg('');
+
+        const contentToSave = fileType === 'text' || fileType === 'docx'
+            ? editorContent
+            : fileUrl ?? '';
+
+        const { error } = await supabase.from('versions').insert({
             document_id: id,
-            content: content.trim(),
-            comment: comment.trim(),
-            created_by: user!.id,
+            content: contentToSave,
+            comment: comment.trim() || null,
+            created_by: userId,
         });
-        setSaving(false);
+
         if (error) {
-            setStatus(`❌ ${error.message}`);
+            setSaveMsg('❌ 保存失败：' + error.message);
         } else {
-            setComment("");
-            setStatus("✅ 版本已保存！");
+            setSaveMsg('✅ 版本已保存');
+            setComment('');
             await fetchVersions();
         }
-    };
+        setSaving(false);
+        setTimeout(() => setSaveMsg(''), 3000);
+    }
 
-    const loadVersion = (v: Version) => {
-        setContent(v.content);
-        setStatus(`📂 已加载版本 ${new Date(v.created_at).toLocaleString("zh-CN")}`);
-    };
+    function loadVersion(v: Version) {
+        if (fileType === 'text' || fileType === 'docx') {
+            setEditorContent(v.content);
+            setDisplayContent(v.content);
+        }
+    }
 
-    const canEdit = myRole === "owner" || myRole === "editor";
-    const roleBadgeColor: Record<string, string> = {
-        owner: "bg-amber-500/20 text-amber-300 border-amber-500/30",
-        editor: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
-        viewer: "bg-slate-500/20 text-slate-300 border-slate-500/30",
-    };
-
-    if (pageLoading) {
+    if (loading) {
         return (
-            <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center">
-                <div className="text-white animate-pulse">Loading...</div>
-            </main>
+            <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ color: '#64748b' }}>加载中...</p>
+            </div>
         );
     }
 
-    if (!doc) {
-        return (
-            <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center">
-                <div className="text-red-400 text-center">
-                    <p className="text-xl mb-2">🚫 无法访问此文档</p>
-                    <p className="text-sm text-slate-500">{status}</p>
-                    <a href="/supabase-test" className="text-indigo-400 text-sm mt-4 block hover:underline">← 返回文档列表</a>
-                </div>
-            </main>
-        );
-    }
+    const badgeColor = role === 'owner' ? '#3b82f6' : role === 'editor' ? '#10b981' : '#f59e0b';
 
     return (
-        <main className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6">
-            <div className="max-w-3xl mx-auto space-y-4">
-                {/* Header */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-md flex items-center justify-between">
-                    <div>
-                        <h1 className="text-xl font-bold text-white">{doc.title}</h1>
-                        <p className="text-xs text-slate-500 mt-0.5">{user?.email}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className={`text-xs border px-2 py-0.5 rounded-full ${roleBadgeColor[myRole] ?? "text-slate-400"}`}>
-                            {myRole || "no access"}
-                        </span>
-                        {myRole === "owner" && (
-                            <a href={`/doc/${id}/share`} className="text-xs bg-emerald-500/20 hover:bg-emerald-500/40 border border-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg transition">
-                                共享设置
-                            </a>
-                        )}
-                        <a href="/supabase-test" className="text-xs text-slate-500 hover:text-slate-300 transition">← 返回</a>
-                    </div>
+        <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif' }}>
+            {/* Header */}
+            <div style={{ borderBottom: '1px solid #1e293b', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Link href="/supabase-test" style={{ color: '#64748b', textDecoration: 'none', fontSize: 14 }}>← 返回列表</Link>
+                <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, flex: 1 }}>{title}</h1>
+                <span style={{
+                    padding: '3px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600,
+                    background: `${badgeColor}22`, color: badgeColor, border: `1px solid ${badgeColor}44`,
+                }}>{role}</span>
+                {role === 'owner' && (
+                    <Link href={`/doc/${id}/share`} style={{
+                        padding: '6px 14px', borderRadius: 6, background: '#1e293b', border: '1px solid #334155',
+                        color: '#94a3b8', textDecoration: 'none', fontSize: 13,
+                    }}>👥 成员管理</Link>
+                )}
+            </div>
+
+            <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 16px' }}>
+                {/* File type badge + upload toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                    <span style={{ fontSize: 13, color: '#64748b' }}>
+                        文档类型：<strong style={{ color: '#94a3b8' }}>{fileType.toUpperCase()}</strong>
+                    </span>
+                    {canEdit && (
+                        <button
+                            onClick={() => setShowUploader(!showUploader)}
+                            style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '1px solid #334155', background: '#1e293b', color: '#94a3b8', cursor: 'pointer' }}
+                        >{showUploader ? '收起' : '📎 上传文件'}</button>
+                    )}
                 </div>
 
-                {/* 编辑区 */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-md space-y-3">
-                    <h2 className="text-sm font-semibold text-slate-300">文档内容</h2>
-                    <textarea
-                        rows={8}
-                        value={content}
-                        onChange={(e) => setContent(e.target.value)}
-                        placeholder={canEdit ? "在这里编写文档内容..." : "（只读权限，无法编辑）"}
-                        readOnly={!canEdit}
-                        className="w-full bg-slate-900/60 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition resize-y font-mono"
-                    />
-                    {canEdit && (
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                placeholder="版本备注（可选）"
-                                value={comment}
-                                onChange={(e) => setComment(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && saveVersion()}
-                                className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white text-sm placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                            />
+                {/* File uploader */}
+                {showUploader && canEdit && (
+                    <div style={{ marginBottom: 20 }}>
+                        <FileUploader
+                            documentId={id}
+                            onUploaded={(url, type) => {
+                                setFileUrl(url);
+                                setFileType(type);
+                                setShowUploader(false);
+                            }}
+                            onTextImport={(html) => {
+                                setEditorContent(html);
+                                setDisplayContent(html);
+                                setShowUploader(false);
+                            }}
+                        />
+                    </div>
+                )}
+
+                {/* Content area based on fileType */}
+                <div style={{ marginBottom: 24 }}>
+                    {(fileType === 'text' || fileType === 'docx') && (
+                        <RichTextEditor
+                            content={canEdit ? editorContent : displayContent}
+                            onChange={setEditorContent}
+                            readOnly={!canEdit}
+                            placeholder="开始编写文档内容..."
+                        />
+                    )}
+                    {fileType === 'pdf' && fileUrl && <PdfViewer fileUrl={fileUrl} />}
+                    {fileType === 'pdf' && !fileUrl && (
+                        <div style={{ padding: 32, textAlign: 'center', color: '#64748b', background: '#1e293b', borderRadius: 8 }}>
+                            尚未上传 PDF 文件，请点击"上传文件"
+                        </div>
+                    )}
+                    {fileType === 'excel' && fileUrl && <ExcelViewer fileUrl={fileUrl} />}
+                    {fileType === 'excel' && !fileUrl && (
+                        <div style={{ padding: 32, textAlign: 'center', color: '#64748b', background: '#1e293b', borderRadius: 8 }}>
+                            尚未上传 Excel 文件，请点击"上传文件"
+                        </div>
+                    )}
+                </div>
+
+                {/* Save version area */}
+                {canEdit && (
+                    <div style={{ background: '#1e293b', borderRadius: 8, padding: 16, marginBottom: 24, border: '1px solid #334155' }}>
+                        <h3 style={{ margin: '0 0 12px 0', fontSize: 14, color: '#94a3b8' }}>💾 保存版本</h3>
+                        <input
+                            value={comment}
+                            onChange={e => setComment(e.target.value)}
+                            placeholder="版本备注（可选）"
+                            style={{
+                                width: '100%', padding: '8px 12px', borderRadius: 6,
+                                border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0',
+                                fontSize: 14, boxSizing: 'border-box', marginBottom: 10,
+                            }}
+                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                             <button
                                 onClick={saveVersion}
                                 disabled={saving}
-                                className="bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 disabled:opacity-40 text-white font-semibold px-5 py-2 rounded-xl transition-all cursor-pointer text-sm"
-                            >
-                                {saving ? "保存中..." : "保存新版本"}
-                            </button>
+                                style={{
+                                    padding: '8px 20px', borderRadius: 6, border: 'none',
+                                    background: saving ? '#334155' : 'linear-gradient(135deg, #3b82f6, #10b981)',
+                                    color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600,
+                                }}
+                            >{saving ? '保存中...' : '保存新版本'}</button>
+                            {saveMsg && <span style={{ fontSize: 13, color: saveMsg.startsWith('✅') ? '#10b981' : '#f87171' }}>{saveMsg}</span>}
                         </div>
-                    )}
-                    {status && <p className="text-xs text-slate-300">{status}</p>}
-                </div>
+                    </div>
+                )}
 
-                {/* 版本列表 */}
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-md">
-                    <h2 className="text-sm font-semibold text-slate-300 mb-3">
-                        版本历史 <span className="text-slate-500">({versions.length})</span>
-                    </h2>
+                {/* Version history */}
+                <div>
+                    <h3 style={{ fontSize: 15, color: '#94a3b8', marginBottom: 12 }}>📋 版本历史</h3>
                     {versions.length === 0 ? (
-                        <p className="text-slate-500 text-sm text-center py-4">暂无版本，保存第一个版本吧 👆</p>
+                        <p style={{ color: '#475569', fontSize: 14 }}>暂无版本记录</p>
                     ) : (
-                        <ul className="space-y-2">
-                            {versions.map((v) => (
-                                <li key={v.id} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-xs text-slate-400 font-mono">
-                                                {new Date(v.created_at).toLocaleString("zh-CN")}
-                                            </span>
-                                            <span className="text-xs text-indigo-400">{v.creator_email}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {versions.map((v, i) => (
+                                <div key={v.id} style={{
+                                    background: '#1e293b', borderRadius: 8, padding: '12px 16px',
+                                    border: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 12,
+                                }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontSize: 13, color: '#e2e8f0' }}>
+                                            <strong>v{versions.length - i}</strong>
+                                            {v.comment && <span style={{ color: '#94a3b8', marginLeft: 8 }}>— {v.comment}</span>}
                                         </div>
-                                        {v.comment && (
-                                            <p className="text-xs text-slate-300 mt-1 italic">"{v.comment}"</p>
-                                        )}
-                                        <p className="text-xs text-slate-600 mt-1 truncate">
-                                            {v.content.slice(0, 60)}{v.content.length > 60 ? "…" : ""}
-                                        </p>
+                                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
+                                            {new Date(v.created_at).toLocaleString('zh-CN')}
+                                            {v.created_by && memberEmails[v.created_by] && (
+                                                <span style={{ marginLeft: 8 }}>· {memberEmails[v.created_by]}</span>
+                                            )}
+                                        </div>
                                     </div>
-                                    <button
-                                        onClick={() => loadVersion(v)}
-                                        className="shrink-0 text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-3 py-1 rounded-lg transition cursor-pointer"
-                                    >
-                                        加载
-                                    </button>
-                                </li>
+                                    {(fileType === 'text' || fileType === 'docx') && (
+                                        <button
+                                            onClick={() => loadVersion(v)}
+                                            style={{
+                                                padding: '5px 12px', borderRadius: 5, border: '1px solid #334155',
+                                                background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 12,
+                                            }}
+                                        >加载此版</button>
+                                    )}
+                                </div>
                             ))}
-                        </ul>
+                        </div>
                     )}
                 </div>
             </div>
-        </main>
+        </div>
     );
 }
