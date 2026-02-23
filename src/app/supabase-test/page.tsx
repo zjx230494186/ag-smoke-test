@@ -26,7 +26,12 @@ export default function SupabaseTestPage() {
             .from("documents")
             .select("id, title, created_at")
             .order("created_at", { ascending: false });
-        if (!error && data) setDocs(data as Document[]);
+        if (error) {
+            console.error("fetchDocs error:", error);
+            setStatus(`❌ 加载文档失败：${error.message}`);
+        } else {
+            setDocs((data as Document[]) ?? []);
+        }
     }, []);
 
     useEffect(() => {
