@@ -1,0 +1,50 @@
+﻿鈻?Next.js 16.1.6 (webpack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+npx.cmd : Failed to co
+mpile.
+所在位置 行:1 字符: 33
++ ... :NEXT_TELEMETRY_
+DISABLED=1; npx.cmd ne
+xt build --webpack 2>&
+1 | Out-F ...
++                     
+            ~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (Failed to    
+ compile.:String)     
+[], RemoteExcepti    o
+n
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+
+./node_modules/@tiptap
+/y-tiptap/dist/y-tipta
+p.js
+Module not found: Can'
+t resolve 'y-protocols
+/awareness'
+
+https://nextjs.org/doc
+s/messages/module-not-
+found
+
+Import trace for reque
+sted module:
+./node_modules/@tiptap
+/extension-collaborati
+on/dist/index.js
+./src/components/RichT
+extEditor.tsx
+./src/app/doc/[id]/pag
+e.tsx
+
+
+> Build failed because
+ of webpack errors

@@ -3,13 +3,21 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import Collaboration from '@tiptap/extension-collaboration';
 import { useEffect } from 'react';
+import type * as Y from 'yjs';
+import type { SupabaseProvider } from '@/lib/supabase-provider';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyExtension = any;
 
 interface RichTextEditorProps {
-    content: string;
+    content?: string;
     onChange?: (html: string) => void;
     readOnly?: boolean;
     placeholder?: string;
+    ydoc?: Y.Doc;
+    provider?: SupabaseProvider;
 }
 
 export default function RichTextEditor({
@@ -17,29 +25,50 @@ export default function RichTextEditor({
     onChange,
     readOnly = false,
     placeholder = '开始编写内容...',
+    ydoc,
+    provider,
 }: RichTextEditorProps) {
+    // Suppress unused var warning — provider used for awareness display only
+    void provider;
+
+    const extensions: AnyExtension[] = [];
+
+    if (ydoc) {
+        // Collaboration extension automatically handles history in TipTap v3
+        extensions.push(StarterKit);
+        extensions.push(
+            Collaboration.configure({
+                document: ydoc,
+            }),
+        );
+    } else {
+        extensions.push(StarterKit);
+    }
+
+    extensions.push(
+        Placeholder.configure({ placeholder }),
+    );
+
     const editor = useEditor({
-        extensions: [
-            StarterKit,
-            Placeholder.configure({ placeholder }),
-        ],
-        content,
+        extensions,
+        content: ydoc ? undefined : content,
         editable: !readOnly,
-        onUpdate: ({ editor }) => {
-            onChange?.(editor.getHTML());
+        onUpdate: ({ editor: ed }) => {
+            onChange?.(ed.getHTML());
         },
         immediatelyRender: false,
     });
 
-    // Sync content when switching versions
+    // Sync content when switching versions (solo mode only)
     useEffect(() => {
-        if (editor && !editor.isDestroyed) {
+        if (ydoc || !editor || editor.isDestroyed) return;
+        if (content !== undefined) {
             const currentHTML = editor.getHTML();
             if (currentHTML !== content) {
                 editor.commands.setContent(content);
             }
         }
-    }, [content, editor]);
+    }, [content, editor, ydoc]);
 
     // Sync readOnly state
     useEffect(() => {
@@ -168,6 +197,28 @@ export default function RichTextEditor({
         }
         .editor-content .ProseMirror hr { border-color: #334155; margin: 16px 0; }
         .read-only .editor-content .ProseMirror { cursor: default; }
+        /* Collaboration cursor styles */
+        .collaboration-cursor__caret {
+          position: relative;
+          margin-left: -1px;
+          margin-right: -1px;
+          border-left: 2px solid #f87171;
+          pointer-events: none;
+          word-break: normal;
+        }
+        .collaboration-cursor__label {
+          position: absolute;
+          top: -1.4em;
+          left: -1px;
+          font-size: 11px;
+          font-weight: 600;
+          padding: 1px 6px;
+          border-radius: 3px 3px 3px 0;
+          color: #fff;
+          white-space: nowrap;
+          user-select: none;
+          pointer-events: none;
+        }
       `}</style>
         </div>
     );

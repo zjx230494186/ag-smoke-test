@@ -2,11 +2,13 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
 import dynamic_import from 'next/dynamic';
+import * as Y from 'yjs';
+import { SupabaseProvider, type AwarenessUser } from '@/lib/supabase-provider';
 
 // Dynamically import heavy components to avoid SSR issues
 const RichTextEditor = dynamic_import(() => import('@/components/RichTextEditor'), { ssr: false });
@@ -54,6 +56,12 @@ export default function DocPage() {
     const [showUploader, setShowUploader] = useState(false);
     const [userId, setUserId] = useState<string | null>(null);
 
+    // Collaboration state
+    const ydocRef = useRef<Y.Doc | null>(null);
+    const providerRef = useRef<SupabaseProvider | null>(null);
+    const [onlineUsers, setOnlineUsers] = useState<AwarenessUser[]>([]);
+    const [collabReady, setCollabReady] = useState(false);
+
     const canEdit = role === 'owner' || role === 'editor';
 
     useEffect(() => {
@@ -72,7 +80,8 @@ export default function DocPage() {
 
             if (error || !doc) { router.push('/supabase-test'); return; }
             setTitle(doc.title);
-            setFileType((doc.file_type as FileType) ?? 'text');
+            const docFileType = (doc.file_type as FileType) ?? 'text';
+            setFileType(docFileType);
             setFileUrl(doc.file_url);
 
             // Determine role
@@ -92,10 +101,32 @@ export default function DocPage() {
 
             // Fetch versions
             await fetchVersions(session.user.id);
+
+            // Initialize collaboration for text-based documents
+            if (docFileType === 'text' || docFileType === 'docx') {
+                const ydoc = new Y.Doc();
+                ydocRef.current = ydoc;
+
+                const userName = session.user.email?.split('@')[0] ?? 'Anonymous';
+                const provider = new SupabaseProvider(id, ydoc, userName);
+                providerRef.current = provider;
+
+                provider.onAwarenessChange = (users) => {
+                    setOnlineUsers([...users]);
+                };
+
+                setCollabReady(true);
+            }
+
             setLoading(false);
         }
 
         load();
+
+        return () => {
+            providerRef.current?.destroy();
+            ydocRef.current?.destroy();
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
@@ -124,7 +155,7 @@ export default function DocPage() {
         }
         setMemberEmails(map);
 
-        // Load latest version content into editor
+        // Load latest version content into editor (solo fallback)
         if (vers && vers.length > 0 && (fileType === 'text' || fileType === 'docx')) {
             setEditorContent(vers[0].content);
             setDisplayContent(vers[0].content);
@@ -181,6 +212,31 @@ export default function DocPage() {
             <div style={{ borderBottom: '1px solid #1e293b', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
                 <Link href="/supabase-test" style={{ color: '#64748b', textDecoration: 'none', fontSize: 14 }}>← 返回列表</Link>
                 <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, flex: 1 }}>{title}</h1>
+
+                {/* Online users */}
+                {onlineUsers.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>在线</span>
+                        <div style={{ display: 'flex', gap: -4 }}>
+                            {onlineUsers.slice(0, 5).map((u) => (
+                                <div
+                                    key={u.clientId}
+                                    title={u.name}
+                                    style={{
+                                        width: 28, height: 28, borderRadius: '50%',
+                                        background: u.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        fontSize: 12, fontWeight: 700, color: '#fff',
+                                        border: '2px solid #0f172a', marginLeft: -6,
+                                    }}
+                                >{u.name.charAt(0).toUpperCase()}</div>
+                            ))}
+                        </div>
+                        {onlineUsers.length > 5 && (
+                            <span style={{ fontSize: 11, color: '#64748b' }}>+{onlineUsers.length - 5}</span>
+                        )}
+                    </div>
+                )}
+
                 <span style={{
                     padding: '3px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600,
                     background: `${badgeColor}22`, color: badgeColor, border: `1px solid ${badgeColor}44`,
@@ -199,6 +255,12 @@ export default function DocPage() {
                     <span style={{ fontSize: 13, color: '#64748b' }}>
                         文档类型：<strong style={{ color: '#94a3b8' }}>{fileType.toUpperCase()}</strong>
                     </span>
+                    {collabReady && (
+                        <span style={{
+                            fontSize: 11, padding: '2px 8px', borderRadius: 10,
+                            background: '#10b98122', color: '#10b981', border: '1px solid #10b98144',
+                        }}>🔴 实时协作</span>
+                    )}
                     {canEdit && (
                         <button
                             onClick={() => setShowUploader(!showUploader)}
@@ -234,18 +296,20 @@ export default function DocPage() {
                             onChange={setEditorContent}
                             readOnly={!canEdit}
                             placeholder="开始编写文档内容..."
+                            ydoc={collabReady ? ydocRef.current ?? undefined : undefined}
+                            provider={collabReady ? providerRef.current ?? undefined : undefined}
                         />
                     )}
                     {fileType === 'pdf' && fileUrl && <PdfViewer fileUrl={fileUrl} />}
                     {fileType === 'pdf' && !fileUrl && (
                         <div style={{ padding: 32, textAlign: 'center', color: '#64748b', background: '#1e293b', borderRadius: 8 }}>
-                            尚未上传 PDF 文件，请点击"上传文件"
+                            尚未上传 PDF 文件，请点击&quot;上传文件&quot;
                         </div>
                     )}
                     {fileType === 'excel' && fileUrl && <ExcelViewer fileUrl={fileUrl} />}
                     {fileType === 'excel' && !fileUrl && (
                         <div style={{ padding: 32, textAlign: 'center', color: '#64748b', background: '#1e293b', borderRadius: 8 }}>
-                            尚未上传 Excel 文件，请点击"上传文件"
+                            尚未上传 Excel 文件，请点击&quot;上传文件&quot;
                         </div>
                     )}
                 </div>
