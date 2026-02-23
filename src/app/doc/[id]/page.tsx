@@ -99,8 +99,8 @@ export default function DocPage() {
                 setRole(membership.role as Role);
             }
 
-            // Fetch versions
-            await fetchVersions(session.user.id);
+            // Fetch versions (pass current fileType to avoid stale closure)
+            await fetchVersions(session.user.id, docFileType);
 
             // Initialize collaboration for text-based documents
             if (docFileType === 'text' || docFileType === 'docx') {
@@ -130,7 +130,7 @@ export default function DocPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
-    async function fetchVersions(uid?: string) {
+    async function fetchVersions(uid?: string, currentFileType?: FileType) {
         const { data: vers } = await supabase
             .from('versions')
             .select('id, content, comment, created_at, created_by')
@@ -156,7 +156,8 @@ export default function DocPage() {
         setMemberEmails(map);
 
         // Load latest version content into editor (solo fallback)
-        if (vers && vers.length > 0 && (fileType === 'text' || fileType === 'docx')) {
+        const ft = currentFileType ?? fileType;
+        if (vers && vers.length > 0 && (ft === 'text' || ft === 'docx')) {
             setEditorContent(vers[0].content);
             setDisplayContent(vers[0].content);
         }
@@ -217,7 +218,7 @@ export default function DocPage() {
                 {onlineUsers.length > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ fontSize: 12, color: '#64748b' }}>在线</span>
-                        <div style={{ display: 'flex', gap: -4 }}>
+                        <div style={{ display: 'flex' }}>
                             {onlineUsers.slice(0, 5).map((u) => (
                                 <div
                                     key={u.clientId}
