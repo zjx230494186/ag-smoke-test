@@ -1,12 +1,12 @@
-import { createClient as supabaseCreateClient } from "@supabase/supabase-js";
+import { createBrowserClient } from "@supabase/ssr";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Singleton for convenience
-export const supabase = supabaseCreateClient(url, key);
+// Singleton browser client — shares auth session across all components
+export const supabase = createBrowserClient(url, key);
 
-// Factory for component-level usage
+// Alias for compatibility
 export function createClient() {
-    return supabaseCreateClient(url, key);
+    return supabase; // Return the same singleton to ensure auth session is shared
 }
